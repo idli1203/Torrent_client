@@ -13,7 +13,7 @@ import (
 
 type Client struct {
 	Conn     net.Conn
-	bitfield bitfield.Bitfield
+	Bitfield bitfield.Bitfield
 	Peers    peers.Peer
 	infohash [20]byte
 	peerid   [20]byte
@@ -85,7 +85,7 @@ func New(peer peers.Peer, peerID, infohash [20]byte) (*Client, error) {
 
 	return &Client{
 		Conn:     conn,
-		bitfield: bfield,
+		Bitfield: bfield,
 		Peers:    peer,
 		infohash: infohash,
 		peerid:   peerID,

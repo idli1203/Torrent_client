@@ -1,7 +1,9 @@
 package serialization
 
 import (
+	"bitorrent_client/peer2peer"
 	"bytes"
+	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
 	"log"
@@ -34,7 +36,45 @@ type TorrentFile struct {
 	Length      int
 }
 
-func Open(torrent_file string) (*bencodeTorrent, error) {
+func (t *TorrentFile) DownloadToFile(path string) error {
+	var peerID [20]byte
+	_, err := rand.Read(peerID[:])
+	if err != nil {
+		return err
+	}
+
+	peers, err := t.RequestPeers(peerID, 8080)
+	if err != nil {
+		return err
+	}
+
+	torrent := peer2peer.Torrent{
+		Peers:       peers,
+		PeerID:      peerID,
+		InfoHash:    t.InfoHash,
+		PieceHashes: t.PieceHashes,
+		PieceLength: t.PieceLength,
+		Length:      t.Length,
+		Name:        t.Name,
+	}
+	buf, err := torrent.Download()
+	if err != nil {
+		return err
+	}
+
+	outFile, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+	_, err = outFile.Write(buf)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func Open(torrent_file string) (*TorrentFile, error) {
 	file, err := os.Open(torrent_file)
 	if err != nil {
 		log.Fatal("Failed to read the torrent file : ", err)
@@ -47,7 +87,7 @@ func Open(torrent_file string) (*bencodeTorrent, error) {
 		log.Fatal("could not unmarshal the torrent_file", err)
 	}
 
-	return &torrent, nil
+	return torrent.ToTorrentstruct(), nil
 }
 
 func (tor_info *bencodeInfo) ComputeinfoHash() ([20]byte, error) {
