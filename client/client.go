@@ -1,10 +1,10 @@
 package client
 
 import (
-	"bitorrent_try/bitfield"
-	"bitorrent_try/message"
-	"bitorrent_try/peers"
-	handshake "bitorrent_try/tcp_conn"
+	"bitorrent_client/bitfield"
+	"bitorrent_client/message"
+	"bitorrent_client/peers"
+	handshake "bitorrent_client/tcp_conn"
 	"bytes"
 	"fmt"
 	"net"

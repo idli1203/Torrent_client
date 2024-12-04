@@ -1,7 +1,7 @@
 package serialization
 
 import (
-	tracker "bitorrent_try/peers"
+	tracker "bitorrent_client/peers"
 	"fmt"
 	"net/http"
 	"net/url"
