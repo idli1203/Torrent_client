@@ -2,6 +2,7 @@ package peers
 
 import (
 	"encoding/binary"
+	"fmt"
 	"log"
 	"net"
 	"strconv"
@@ -22,7 +23,8 @@ func Unmarshal_Peer(peer_collection []byte) ([]Peer, error) {
 
 	if len(peer_collection)%Peersize != 0 {
 		log.Fatal("The given peer list is error prone or incomplete.")
-		return nil, nil
+
+		return nil, fmt.Errorf("%s", "Peer list incomplete")
 	}
 
 	for i := 0; i < numofpeers; i++ {

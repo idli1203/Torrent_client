@@ -45,7 +45,7 @@ func completeHandshake(conn net.Conn, infohash, peerid [20]byte) (*handshake.Han
 }
 
 func recievebitField(conn net.Conn) (bitfield.Bitfield, error) {
-	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
 	defer conn.SetDeadline(time.Time{})
 
 	msg, err := message.Read(conn)
