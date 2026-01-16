@@ -1,5 +1,4 @@
-package message
-
+package protocol
 import (
 	"encoding/binary"
 	"fmt"

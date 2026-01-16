@@ -1,4 +1,4 @@
-module bitorrent_client
+module btc
 
 go 1.23.2
 

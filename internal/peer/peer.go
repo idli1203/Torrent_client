@@ -1,9 +1,8 @@
-package peers
+package peer
 
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"net"
 	"strconv"
 )
@@ -22,9 +21,7 @@ func Unmarshal_Peer(peer_collection []byte) ([]Peer, error) {
 	Peers := make([]Peer, numofpeers)
 
 	if len(peer_collection)%Peersize != 0 {
-		log.Fatal("The given peer list is error prone or incomplete.")
-
-		return nil, fmt.Errorf("%s", "Peer list incomplete")
+		return nil, fmt.Errorf("invalid peer list length: %d not divisible by %d", len(peer_collection), Peersize)
 	}
 
 	for i := 0; i < numofpeers; i++ {

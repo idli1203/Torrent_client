@@ -1,5 +1,4 @@
-package handshake
-
+package protocol
 import (
 	"fmt"
 	"io"
@@ -11,12 +10,12 @@ type Handshake struct {
 	PeerID   [20]byte
 }
 
-func Newhandshake(Infohash [20]byte, peerid [20]byte) *Handshake {
+func NewHandshake(Infohash [20]byte, peerid [20]byte) (*Handshake, error) {
 	return &Handshake{
 		Pstr:     "BitTorrent Protocol",
 		InfoHash: Infohash,
 		PeerID:   peerid,
-	}
+	}, nil
 }
 
 func (h *Handshake) Serialize() []byte {

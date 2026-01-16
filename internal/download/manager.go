@@ -1,9 +1,7 @@
-package peer2peer
-
+package download
 import (
-	"bitorrent_client/client"
-	"bitorrent_client/message"
-	"bitorrent_client/peers"
+	"btc/internal/peer"
+	"btc/internal/protocol"
 	"bytes"
 	"crypto/sha1"
 	"fmt"
@@ -19,7 +17,7 @@ const maxbacklog = 5
 type Torrent struct {
 	PieceHashes [][20]byte
 	Name        string
-	Peers       []peers.Peer
+	Peers       []peer.Peer
 	Length      int
 	PieceLength int
 	PeerID      [20]byte
@@ -38,7 +36,7 @@ type piece_res struct {
 }
 
 type piece_progress struct {
-	client     *client.Client
+	client     *peer.Client
 	buf        []byte
 	downloaded int
 	requested  int
@@ -57,18 +55,18 @@ func (status *piece_progress) read_message() error {
 	}
 
 	switch msg.ID {
-	case message.MsgUnchoke:
+	case protocol.MsgUnchoke:
 		status.client.Choke = false
-	case message.MsgChoke:
+	case protocol.MsgChoke:
 		status.client.Choke = true
-	case message.MsgHave:
-		index, err := message.ParseHave(msg)
+	case protocol.MsgHave:
+		index, err := protocol.ParseHave(msg)
 		if err != nil {
 			return err
 		}
 		status.client.Bitfield.SetPiece(index)
-	case message.MsgPiece:
-		n, err := message.ParsePiece(status.index, status.buf, msg)
+	case protocol.MsgPiece:
+		n, err := protocol.ParsePiece(status.index, status.buf, msg)
 		if err != nil {
 			return err
 		}
@@ -79,7 +77,7 @@ func (status *piece_progress) read_message() error {
 	return nil
 }
 
-func Download_Piece(c *client.Client, cp *curr_piece) ([]byte, error) {
+func Download_Piece(c *peer.Client, cp *curr_piece) ([]byte, error) {
 	status := piece_progress{
 		index:  cp.index,
 		client: c,
@@ -129,15 +127,15 @@ func IntegrityCheck(cp *curr_piece, buf []byte) error {
 	return nil
 }
 
-func (t *Torrent) startDownload(peer peers.Peer, workQueue chan *curr_piece, results chan *piece_res) {
-	c, err := client.New(peer, t.PeerID, t.InfoHash)
+func (t *Torrent) startDownload(p peer.Peer, workQueue chan *curr_piece, results chan *piece_res) {
+	c, err := peer.New(p, t.PeerID, t.InfoHash)
 	if err != nil {
-		log.Printf("Could not handshake with %s.", peer.IP)
+		log.Printf("Could not handshake with %s.", p.IP)
 		return
 	}
 	defer c.Conn.Close()
 
-	log.Printf("Sucessfull  handshake with %s\n", peer.IP)
+	log.Printf("Sucessfull  handshake with %s\n", p.IP)
 
 	c.SendUnchoke()
 	c.SendInterested()
@@ -192,8 +190,8 @@ func (t *Torrent) Download() ([]byte, error) {
 		workQueue <- &curr_piece{index, hash, length}
 	}
 
-	for _, peer := range t.Peers {
-		go t.startDownload(peer, workQueue, results)
+	for _, p := range t.Peers {
+		go t.startDownload(p, workQueue, results)
 	}
 
 	// Collect results into a buffer until full

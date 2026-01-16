@@ -1,4 +1,4 @@
-package bitfield
+package protocol
 
 type Bitfield []byte
 

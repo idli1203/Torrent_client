@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bitorrent_client/serialization"
+	"btc/internal/torrent"
 	"log"
 	"os"
 )
@@ -9,8 +9,7 @@ import (
 func main() {
 	inPath := os.Args[1]
 	outPath := os.Args[2]
-
-	tf, err := serialization.Open(inPath)
+	tf, err := torrent.Open(inPath)
 	if err != nil {
 		log.Fatal(err)
 	}

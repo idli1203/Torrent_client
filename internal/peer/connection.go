@@ -1,10 +1,6 @@
-package client
-
+package peer
 import (
-	"bitorrent_client/bitfield"
-	"bitorrent_client/message"
-	"bitorrent_client/peers"
-	handshake "bitorrent_client/tcp_conn"
+	"btc/internal/protocol"
 	"bytes"
 	"fmt"
 	"net"
@@ -13,26 +9,29 @@ import (
 
 type Client struct {
 	Conn     net.Conn
-	Bitfield bitfield.Bitfield
-	Peers    peers.Peer
+	Bitfield protocol.Bitfield
+	Peers    Peer
 	infohash [20]byte
 	peerid   [20]byte
 	Choke    bool
 }
 
 // complete the handshake to transfer the files between peers by establishing a connection
-func completeHandshake(conn net.Conn, infohash, peerid [20]byte) (*handshake.Handshake, error) {
+func CompleteHandshake(conn net.Conn, infohash, peerid [20]byte) (*protocol.Handshake, error) {
 	conn.SetDeadline(time.Now().Add(5 * time.Second)) // basically for establishing a conn within 5 seconds other wise go to other peers
 
 	defer conn.SetDeadline(time.Time{}) // disables the deadline
 
-	hand_req := handshake.Newhandshake(infohash, peerid)
-	_, err := conn.Write(hand_req.Serialize())
+	hand_req, err := protocol.NewHandshake(infohash, peerid)
+	if err != nil {
+		return nil, err
+	}
+	_, err = conn.Write(hand_req.Serialize())
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := handshake.Read_Handshake(conn)
+	res, err := protocol.Read_Handshake(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -44,11 +43,11 @@ func completeHandshake(conn net.Conn, infohash, peerid [20]byte) (*handshake.Han
 	return res, nil
 }
 
-func recievebitField(conn net.Conn) (bitfield.Bitfield, error) {
+func RecieveBitfield(conn net.Conn) (protocol.Bitfield, error) {
 	conn.SetDeadline(time.Now().Add(5 * time.Second))
 	defer conn.SetDeadline(time.Time{})
 
-	msg, err := message.Read(conn)
+	msg, err := protocol.Read(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +56,7 @@ func recievebitField(conn net.Conn) (bitfield.Bitfield, error) {
 		err := fmt.Errorf("Got something other than bitfield : %s", msg)
 		return nil, err
 	}
-	if msg.ID != message.MsgBitfield {
+	if msg.ID != protocol.MsgBitfield {
 		err := fmt.Errorf("Expected bitfield but got ID %d", msg.ID)
 		return nil, err
 	}
@@ -65,19 +64,19 @@ func recievebitField(conn net.Conn) (bitfield.Bitfield, error) {
 	return msg.Payload, nil
 }
 
-func New(peer peers.Peer, peerID, infohash [20]byte) (*Client, error) {
+func New(peer Peer, peerID, infohash [20]byte) (* Client, error) {
 	conn, err := net.DialTimeout("tcp", peer.String(), 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = completeHandshake(conn, infohash, peerID)
+	_, err = CompleteHandshake(conn, infohash, peerID)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
 
-	bfield, err := recievebitField(conn)
+	bfield, err := RecieveBitfield(conn)
 	if err != nil {
 		conn.Close()
 		return nil, err
@@ -93,21 +92,21 @@ func New(peer peers.Peer, peerID, infohash [20]byte) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) Read() (*message.Message, error) {
-	msg, err := message.Read(c.Conn)
+func (c *Client) Read() (*protocol.Message, error) {
+	msg, err := protocol.Read(c.Conn)
 	return msg, err
 }
 
 // Sends a request message to the peer
 func (c *Client) SendRequest(idx, begin, len int) error {
-	req := message.Format_msgRequest(idx, begin, len)
+	req := protocol.Format_msgRequest(idx, begin, len)
 	_, err := c.Conn.Write(req.Serialize())
 
 	return err
 }
 
 func (c *Client) SendInterested() error {
-	msg := message.Message{ID: message.MsgInterested}
+	msg := protocol.Message{ID: protocol.MsgInterested}
 
 	_, err := c.Conn.Write(msg.Serialize())
 
@@ -115,7 +114,7 @@ func (c *Client) SendInterested() error {
 }
 
 func (c *Client) SendNotInterested() error {
-	msg := message.Message{ID: message.MsgUnInterested}
+	msg := protocol.Message{ID: protocol.MsgUnInterested}
 
 	_, err := c.Conn.Write(msg.Serialize())
 
@@ -123,7 +122,7 @@ func (c *Client) SendNotInterested() error {
 }
 
 func (c *Client) SendUnchoke() error {
-	msg := message.Message{ID: message.MsgUnchoke}
+	msg := protocol.Message{ID: protocol.MsgUnchoke}
 
 	_, err := c.Conn.Write(msg.Serialize())
 
@@ -131,7 +130,7 @@ func (c *Client) SendUnchoke() error {
 }
 
 func (c *Client) SendHave(idx int) error {
-	msg := message.Format_msgHave(idx)
+	msg := protocol.Format_msgHave(idx)
 
 	_, err := c.Conn.Write(msg.Serialize())
 
