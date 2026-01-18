@@ -1,6 +1,6 @@
 package config
 
-import time
+import "time"
 
 // config types : blocksize , handshake tout , tcp tout , piece tout , tracker tout , max peerval , request backlog (pipeline vala)
 
@@ -13,4 +13,5 @@ type Config struct {
 	 MaxPeers      int
 	 RequestBacklog int
 }
+
 
