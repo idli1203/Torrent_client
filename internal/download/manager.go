@@ -1,5 +1,7 @@
 package download
+
 import (
+	"btc/internal/config"
 	"btc/internal/peer"
 	"btc/internal/protocol"
 	"bytes"
@@ -10,10 +12,6 @@ import (
 	"time"
 )
 
-const upper_bsize = 32768
-
-const maxbacklog = 5
-
 type Torrent struct {
 	PieceHashes [][20]byte
 	Name        string
@@ -22,6 +20,7 @@ type Torrent struct {
 	PieceLength int
 	PeerID      [20]byte
 	InfoHash    [20]byte
+	Cfg         *config.Config // Config stored in struct
 }
 
 type curr_piece struct {
@@ -77,34 +76,36 @@ func (status *piece_progress) read_message() error {
 	return nil
 }
 
-func Download_Piece(c *peer.Client, cp *curr_piece) ([]byte, error) {
+func (t *Torrent) downloadPiece(c *peer.Client, cp *curr_piece) ([]byte, error) {
 	status := piece_progress{
 		index:  cp.index,
 		client: c,
 		buf:    make([]byte, cp.length),
 	}
 
-	c.Conn.SetDeadline(time.Now().Add(30 * time.Second))
+	// Use config value for piece timeout
+	c.Conn.SetDeadline(time.Now().Add(t.Cfg.PieceTimeout))
 	defer c.Conn.SetDeadline(time.Time{})
 
 	for status.downloaded < cp.length {
 
 		if !status.client.Choke {
-			for status.backlog < maxbacklog && status.requested < cp.length {
+			// Use config values for backlog and block size
+			for status.backlog < t.Cfg.RequestBacklog && status.requested < cp.length {
 
-				block_size := upper_bsize
+				blockSize := t.Cfg.BlockSize
 
-				if cp.length-status.requested < block_size {
-					block_size = cp.length - status.requested
+				if cp.length-status.requested < blockSize {
+					blockSize = cp.length - status.requested
 				}
 
-				err := c.SendRequest(cp.index, status.requested, block_size)
+				err := c.SendRequest(cp.index, status.requested, blockSize)
 				if err != nil {
 					return nil, err
 				}
 
 				status.backlog++
-				status.requested += block_size
+				status.requested += blockSize
 			}
 		}
 
@@ -117,7 +118,7 @@ func Download_Piece(c *peer.Client, cp *curr_piece) ([]byte, error) {
 	return status.buf, nil
 }
 
-func IntegrityCheck(cp *curr_piece, buf []byte) error {
+func integrityCheck(cp *curr_piece, buf []byte) error {
 	hashed := sha1.Sum(buf)
 
 	if !bytes.Equal(hashed[:], cp.hash[:]) {
@@ -128,14 +129,14 @@ func IntegrityCheck(cp *curr_piece, buf []byte) error {
 }
 
 func (t *Torrent) startDownload(p peer.Peer, workQueue chan *curr_piece, results chan *piece_res) {
-	c, err := peer.New(p, t.PeerID, t.InfoHash)
+	c, err := peer.New(p, t.PeerID, t.InfoHash, t.Cfg)
 	if err != nil {
 		log.Printf("Could not handshake with %s.", p.IP)
 		return
 	}
 	defer c.Conn.Close()
 
-	log.Printf("Sucessfull  handshake with %s\n", p.IP)
+	log.Printf("Successful handshake with %s\n", p.IP)
 
 	c.SendUnchoke()
 	c.SendInterested()
@@ -146,14 +147,14 @@ func (t *Torrent) startDownload(p peer.Peer, workQueue chan *curr_piece, results
 			continue
 		}
 
-		buf, err := Download_Piece(c, cp)
+		buf, err := t.downloadPiece(c, cp)
 		if err != nil {
 			log.Println("Exit", err)
 			workQueue <- cp
 			return
 		}
 
-		err = IntegrityCheck(cp, buf)
+		err = integrityCheck(cp, buf)
 		if err != nil {
 			log.Printf("Piece #%d failed integrity check\n", cp.index)
 			workQueue <- cp
@@ -179,7 +180,7 @@ func (t *Torrent) PieceSize(index int) int {
 	return end - begin
 }
 
-// store the entire file in memory.
+// Download stores the entire file in memory.
 func (t *Torrent) Download() ([]byte, error) {
 	log.Println("Starting download for", t.Name)
 

@@ -14,4 +14,16 @@ type Config struct {
 	 RequestBacklog int
 }
 
+func Default() *Config {
 
+	return &Config{
+		BlockSize:        16 * 1024,
+		HandshakeTimeout: 15 * time.Second,
+		TcpTimeout:       15 * time.Second,
+		PieceTimeout:     30 * time.Second,
+		TrackerTimeout:   30 * time.Second,
+		MaxPeers:         50,
+		RequestBacklog:   50,
+	}
+	
+}

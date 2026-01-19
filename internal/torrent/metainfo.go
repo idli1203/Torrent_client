@@ -1,6 +1,7 @@
 package torrent
 
 import (
+	"btc/internal/config"
 	"btc/internal/download"
 	"btc/internal/peer"
 	"bytes"
@@ -11,12 +12,11 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/jackpal/bencode-go"
 )
 
-// BencodeInfo is the struct which contains the info dictionary and data about the torrent file
+// bencodeInfo contains the info dictionary and data about the torrent file
 type bencodeInfo struct {
 	Name        string `bencode:"name"`
 	Pieces      string `bencode:"pieces"`
@@ -24,13 +24,13 @@ type bencodeInfo struct {
 	PieceLength int    `bencode:"piece length"`
 }
 
-// Bencoded torrent file depackaged to a struct
+// bencodeTorrent is the bencoded torrent file depackaged to a struct
 type bencodeTorrent struct {
 	Announce string      `bencode:"announce"`
 	Info     bencodeInfo `bencode:"info"`
 }
 
-// more of a compact type of struct constructed in order to have all relavant data in one struct
+// TorrentFile is a compact struct with all relevant data
 type TorrentFile struct {
 	Name        string
 	Announce    string
@@ -49,8 +49,7 @@ type bencode_tracker_resp struct {
 func (t *TorrentFile) TrackerURL(peerID [20]byte, port uint16) (string, error) {
 	parsed_url, err := url.Parse(t.Announce)
 	if err != nil {
-		fmt.Println("URL could not be parsed")
-		return "", err
+		return "", fmt.Errorf("could not parse tracker URL: %w", err)
 	}
 	parameters_url := url.Values{
 		"info_hash":  []string{string(t.InfoHash[:])},
@@ -66,12 +65,12 @@ func (t *TorrentFile) TrackerURL(peerID [20]byte, port uint16) (string, error) {
 	return parsed_url.String(), nil
 }
 
-func (t *TorrentFile) RequestPeers(peerID [20]byte, port uint16) ([]peer.Peer, error) {
+func (t *TorrentFile) RequestPeers(peerID [20]byte, port uint16, cfg *config.Config) ([]peer.Peer, error) {
 	trackerURL, err := t.TrackerURL(peerID, port)
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: cfg.TrackerTimeout}
 	response, err := client.Get(trackerURL)
 	if err != nil {
 		return nil, err
@@ -86,14 +85,14 @@ func (t *TorrentFile) RequestPeers(peerID [20]byte, port uint16) ([]peer.Peer, e
 	return peer.Unmarshal_Peer([]byte(tracker_resp.Peers))
 }
 
-func (t *TorrentFile) DownloadToFile(path string) error {
+func (t *TorrentFile) DownloadToFile(path string, cfg *config.Config) error {
 	var peerID [20]byte
 	_, err := rand.Read(peerID[:])
 	if err != nil {
 		return err
 	}
 
-	peers, err := t.RequestPeers(peerID, 8080)
+	peers, err := t.RequestPeers(peerID, 8080, cfg)
 	if err != nil {
 		return err
 	}
@@ -106,6 +105,7 @@ func (t *TorrentFile) DownloadToFile(path string) error {
 		PieceLength: t.PieceLength,
 		Length:      t.Length,
 		Name:        t.Name,
+		Cfg:         cfg,
 	}
 	buf, err := torrent.Download()
 	if err != nil {
@@ -129,6 +129,7 @@ func Open(torrent_file string) (*TorrentFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the torrent file: %w", err)
 	}
+	defer file.Close()
 
 	var torrent bencodeTorrent
 
@@ -145,8 +146,7 @@ func (tor_info *bencodeInfo) ComputeinfoHash() ([20]byte, error) {
 
 	err := bencode.Marshal(&buffer, *tor_info)
 	if err != nil {
-		fmt.Println("The sha1 hash is not possible")
-		return [20]byte{}, err
+		return [20]byte{}, fmt.Errorf("could not compute info hash: %w", err)
 	}
 
 	compute := sha1.Sum(buffer.Bytes())
@@ -163,8 +163,6 @@ func (tor_info *bencodeInfo) SplitToPieces() ([][20]byte, error) {
 	}
 
 	numPieces := len(buf) / sha1_hash_length
-
-	fmt.Println("the number of Pieces are : ", numPieces)
 
 	PieceHashes := make([][20]byte, numPieces)
 	for i := 0; i < numPieces; i++ {

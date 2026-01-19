@@ -66,7 +66,7 @@ func ParsePiece(idx int, msg_buf []byte, msg *Message) (int, error) {
 
 	begin := int(binary.BigEndian.Uint32(msg.Payload[4:8]))
 	if begin >= len(msg_buf) {
-		return 0, fmt.Errorf("Beginoffset too high. %d >= %d", begin, len(msg_buf))
+		return 0, fmt.Errorf("Begin  offset too high. %d >= %d", begin, len(msg_buf))
 	}
 
 	data := msg.Payload[8:]
