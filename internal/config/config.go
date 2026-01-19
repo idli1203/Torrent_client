@@ -25,5 +25,5 @@ func Default() *Config {
 		MaxPeers:         50,
 		RequestBacklog:   50,
 	}
-	
+
 }
