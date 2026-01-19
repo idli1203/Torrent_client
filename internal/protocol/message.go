@@ -1,4 +1,5 @@
 package protocol
+
 import (
 	"encoding/binary"
 	"fmt"
@@ -8,24 +9,15 @@ import (
 type MessageID uint8
 
 const (
-	// Fixed length and no Payload
-	MsgChoke MessageID = 0
-	// fixlength and no payload
-	MsgUnchoke MessageID = 1
-	// fixed length and no payload
-	MsgInterested MessageID = 2
-	// fixed length and no payload
+	MsgChoke        MessageID = 0
+	MsgUnchoke      MessageID = 1
+	MsgInterested   MessageID = 2
 	MsgUnInterested MessageID = 3
-	// fixed length and payload is zero based indexed
-	MsgHave MessageID = 4
-	// variable length
-	MsgBitfield MessageID = 5
-	// fixed length and has payload  == index  , begin , length
-	MsgRequest MessageID = 6
-	// variable length and same payload === index , begin , block
-	MsgPiece MessageID = 7
-	// fixed length and same as request payload
-	MsgCancel = 8
+	MsgHave         MessageID = 4
+	MsgBitfield     MessageID = 5
+	MsgRequest      MessageID = 6
+	MsgPiece        MessageID = 7
+	MsgCancel       MessageID = 8
 )
 
 type Message struct {
@@ -33,67 +25,60 @@ type Message struct {
 	ID      MessageID
 }
 
-func Format_msgRequest(idx, begin, len int) *Message {
+func FormatRequest(index, begin, length int) *Message {
 	payload := make([]byte, 12)
-
-	binary.BigEndian.PutUint32(payload[0:4], uint32(idx))
+	binary.BigEndian.PutUint32(payload[0:4], uint32(index))
 	binary.BigEndian.PutUint32(payload[4:8], uint32(begin))
-	binary.BigEndian.PutUint32(payload[8:12], uint32(len))
-
+	binary.BigEndian.PutUint32(payload[8:12], uint32(length))
 	return &Message{ID: MsgRequest, Payload: payload}
 }
 
-func Format_msgHave(idx int) *Message {
+func FormatHave(index int) *Message {
 	payload := make([]byte, 4)
-	binary.BigEndian.PutUint32(payload[:], uint32(idx))
-
+	binary.BigEndian.PutUint32(payload[:], uint32(index))
 	return &Message{ID: MsgHave, Payload: payload}
 }
 
-func ParsePiece(idx int, msg_buf []byte, msg *Message) (int, error) {
+func ParsePiece(index int, buf []byte, msg *Message) (int, error) {
 	if msg.ID != MsgPiece {
-		return 0, fmt.Errorf("Msg ID is not msgPiece , got id = %d", msg.ID)
+		return 0, fmt.Errorf("msg ID is not MsgPiece, got id = %d", msg.ID)
 	}
 
 	if len(msg.Payload) < 8 {
-		return 0, fmt.Errorf("Payload is too short : %d", len(msg.Payload))
+		return 0, fmt.Errorf("payload is too short: %d", len(msg.Payload))
 	}
 
 	parsedIndex := int(binary.BigEndian.Uint32(msg.Payload[0:4]))
-	if parsedIndex != idx {
-		return 0, fmt.Errorf("Indexes no matching -- found : %d , expected : %d", parsedIndex, idx)
+	if parsedIndex != index {
+		return 0, fmt.Errorf("indexes not matching -- found: %d, expected: %d", parsedIndex, index)
 	}
 
 	begin := int(binary.BigEndian.Uint32(msg.Payload[4:8]))
-	if begin >= len(msg_buf) {
-		return 0, fmt.Errorf("Begin  offset too high. %d >= %d", begin, len(msg_buf))
+	if begin >= len(buf) {
+		return 0, fmt.Errorf("begin offset too high: %d >= %d", begin, len(buf))
 	}
 
 	data := msg.Payload[8:]
-	if begin+len(data) > len(msg_buf) {
-		return 0, fmt.Errorf("Data == %d , greater than for offset== %d , found length == %d", len(data), begin, len(msg_buf))
+	if begin+len(data) > len(buf) {
+		return 0, fmt.Errorf("data too long for offset: data=%d, offset=%d, bufLen=%d", len(data), begin, len(buf))
 	}
 
-	copy(msg_buf[begin:], data)
-
+	copy(buf[begin:], data)
 	return len(data), nil
 }
 
 func ParseHave(msg *Message) (int, error) {
 	if msg.ID != MsgHave {
-		return 0, fmt.Errorf("The message formats do not match")
+		return 0, fmt.Errorf("message ID does not match MsgHave")
 	}
 
 	if len(msg.Payload) != 4 {
-		return 0, fmt.Errorf("The payload is different than required")
+		return 0, fmt.Errorf("payload length is different than required")
 	}
 
 	index := int(binary.BigEndian.Uint32(msg.Payload))
-
 	return index, nil
 }
-
-// Read parses a message from a stream.
 
 func Read(r io.Reader) (*Message, error) {
 	buffer := make([]byte, 4)
@@ -109,35 +94,31 @@ func Read(r io.Reader) (*Message, error) {
 		return nil, nil
 	}
 
-	message_buffer := make([]byte, length)
-	_, err = io.ReadFull(r, message_buffer)
+	msgBuf := make([]byte, length)
+	_, err = io.ReadFull(r, msgBuf)
 	if err != nil {
 		return nil, err
 	}
 
-	m := Message{
-		ID:      MessageID(message_buffer[0]),
-		Payload: message_buffer[1:],
-	}
-
-	return &m, nil
+	return &Message{
+		ID:      MessageID(msgBuf[0]),
+		Payload: msgBuf[1:],
+	}, nil
 }
 
-// Serialize the message into a buffer of format <lenght prefix><MessageID><payload>
 func (msg *Message) Serialize() []byte {
 	if msg == nil {
 		return make([]byte, 4)
 	}
 
-	prefix_len := uint32(len(msg.Payload) + 1)
-	msg_buf := make([]byte, 4+prefix_len)
+	prefixLen := uint32(len(msg.Payload) + 1)
+	buf := make([]byte, 4+prefixLen)
 
-	binary.BigEndian.PutUint32(msg_buf[0:4], prefix_len)
-	msg_buf[4] = byte(msg.ID)
+	binary.BigEndian.PutUint32(buf[0:4], prefixLen)
+	buf[4] = byte(msg.ID)
+	copy(buf[5:], msg.Payload)
 
-	copy(msg_buf[5:], msg.Payload)
-
-	return msg_buf
+	return buf
 }
 
 func (m *Message) name() string {
@@ -147,15 +128,15 @@ func (m *Message) name() string {
 
 	switch m.ID {
 	case MsgChoke:
-		return "choke"
+		return "Choke"
 	case MsgUnchoke:
-		return "unchoke"
+		return "Unchoke"
 	case MsgInterested:
-		return "interested"
+		return "Interested"
 	case MsgUnInterested:
-		return "uninterested"
+		return "NotInterested"
 	case MsgHave:
-		return "have"
+		return "Have"
 	case MsgBitfield:
 		return "Bitfield"
 	case MsgCancel:
@@ -164,9 +145,8 @@ func (m *Message) name() string {
 		return "Piece"
 	case MsgRequest:
 		return "Request"
-
 	default:
-		return fmt.Sprintf("Unknown %d", m.ID)
+		return fmt.Sprintf("Unknown#%d", m.ID)
 	}
 }
 
@@ -174,6 +154,5 @@ func (m *Message) String() string {
 	if m == nil {
 		return m.name()
 	}
-
 	return fmt.Sprintf("%s [%d]", m.name(), len(m.Payload))
 }

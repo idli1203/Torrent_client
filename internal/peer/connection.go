@@ -12,28 +12,27 @@ import (
 type Client struct {
 	Conn     net.Conn
 	Bitfield protocol.Bitfield
-	Peers    Peer
+	Peer     Peer
 	infohash [20]byte
-	peerid   [20]byte
+	peerID   [20]byte
 	Choke    bool
 	cfg      *config.Config
 }
 
-// completeHandshake transfers files between peers by establishing a connection
-func completeHandshake(conn net.Conn, infohash, peerid [20]byte, cfg *config.Config) (*protocol.Handshake, error) {
+func completeHandshake(conn net.Conn, infohash, peerID [20]byte, cfg *config.Config) (*protocol.Handshake, error) {
 	conn.SetDeadline(time.Now().Add(cfg.HandshakeTimeout))
 	defer conn.SetDeadline(time.Time{})
 
-	hand_req, err := protocol.NewHandshake(infohash, peerid)
+	req, err := protocol.NewHandshake(infohash, peerID)
 	if err != nil {
 		return nil, err
 	}
-	_, err = conn.Write(hand_req.Serialize())
+	_, err = conn.Write(req.Serialize())
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := protocol.Read_Handshake(conn)
+	res, err := protocol.ReadHandshake(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -86,21 +85,20 @@ func New(peer Peer, peerID, infohash [20]byte, cfg *config.Config) (*Client, err
 	return &Client{
 		Conn:     conn,
 		Bitfield: bfield,
-		Peers:    peer,
+		Peer:     peer,
 		infohash: infohash,
-		peerid:   peerID,
+		peerID:   peerID,
 		Choke:    true,
 		cfg:      cfg,
 	}, nil
 }
 
 func (c *Client) Read() (*protocol.Message, error) {
-	msg, err := protocol.Read(c.Conn)
-	return msg, err
+	return protocol.Read(c.Conn)
 }
 
-func (c *Client) SendRequest(idx, begin, length int) error {
-	req := protocol.Format_msgRequest(idx, begin, length)
+func (c *Client) SendRequest(index, begin, length int) error {
+	req := protocol.FormatRequest(index, begin, length)
 	_, err := c.Conn.Write(req.Serialize())
 	return err
 }
@@ -123,23 +121,20 @@ func (c *Client) SendUnchoke() error {
 	return err
 }
 
-func (c *Client) SendHave(idx int) error {
-	msg := protocol.Format_msgHave(idx)
+func (c *Client) SendHave(index int) error {
+	msg := protocol.FormatHave(index)
 	_, err := c.Conn.Write(msg.Serialize())
 	return err
 }
 
-// GetBitfield returns the peer's bitfield
 func (c *Client) GetBitfield() protocol.Bitfield {
 	return c.Bitfield
 }
 
-// IsChoked returns whether we're choked by this peer
 func (c *Client) IsChoked() bool {
 	return c.Choke
 }
 
-// Close closes the connection to the peer
 func (c *Client) Close() error {
 	return c.Conn.Close()
 }

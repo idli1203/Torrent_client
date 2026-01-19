@@ -12,26 +12,23 @@ type Peer struct {
 	Port uint16
 }
 
-func Unmarshal_Peer(peer_collection []byte) ([]Peer, error) {
-	// Peer_collection
-	const Peersize = 6
+func UnmarshalPeers(peerData []byte) ([]Peer, error) {
+	const peerSize = 6
 
-	numofpeers := len(peer_collection) / Peersize
-
-	Peers := make([]Peer, numofpeers)
-
-	if len(peer_collection)%Peersize != 0 {
-		return nil, fmt.Errorf("invalid peer list length: %d not divisible by %d", len(peer_collection), Peersize)
+	if len(peerData)%peerSize != 0 {
+		return nil, fmt.Errorf("invalid peer list length: %d not divisible by %d", len(peerData), peerSize)
 	}
 
-	for i := 0; i < numofpeers; i++ {
-		offset := i * Peersize
+	numPeers := len(peerData) / peerSize
+	peers := make([]Peer, numPeers)
 
-		Peers[i].IP = net.IP(peer_collection[offset : offset+4])
-		Peers[i].Port = binary.BigEndian.Uint16([]byte(peer_collection[offset+4 : offset+6]))
+	for i := 0; i < numPeers; i++ {
+		offset := i * peerSize
+		peers[i].IP = net.IP(peerData[offset : offset+4])
+		peers[i].Port = binary.BigEndian.Uint16(peerData[offset+4 : offset+6])
 	}
 
-	return Peers, nil
+	return peers, nil
 }
 
 func (p Peer) String() string {

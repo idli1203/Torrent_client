@@ -5,6 +5,7 @@ import (
 	"btc/internal/download"
 	"btc/internal/peer"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
@@ -82,10 +83,10 @@ func (t *TorrentFile) RequestPeers(peerID [20]byte, port uint16, cfg *config.Con
 	if err != nil {
 		return nil, err
 	}
-	return peer.Unmarshal_Peer([]byte(tracker_resp.Peers))
+	return peer.UnmarshalPeers([]byte(tracker_resp.Peers))
 }
 
-func (t *TorrentFile) DownloadToFile(path string, cfg *config.Config) error {
+func (t *TorrentFile) DownloadToFile(ctx context.Context, path string, cfg *config.Config) error {
 	var peerID [20]byte
 	_, err := rand.Read(peerID[:])
 	if err != nil {
@@ -107,7 +108,7 @@ func (t *TorrentFile) DownloadToFile(path string, cfg *config.Config) error {
 		Name:        t.Name,
 		Cfg:         cfg,
 	}
-	buf, err := torrent.Download()
+	buf, err := torrent.Download(ctx)
 	if err != nil {
 		return err
 	}
