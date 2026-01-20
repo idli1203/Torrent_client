@@ -2,16 +2,22 @@ package download
 
 import (
 	"btc/internal/config"
+	"btc/internal/logger"
 	"btc/internal/peer"
 	"btc/internal/protocol"
 	"bytes"
 	"context"
 	"crypto/sha1"
 	"fmt"
-	"log"
 	"runtime"
 	"time"
 )
+
+// ProgressCallback is called to report download progress
+type ProgressCallback func(percent float64, pieceIndex int, peerCount int)
+
+// EventCallback is called to report events during download
+type EventCallback func(event string, data map[string]any)
 
 type Torrent struct {
 	PieceHashes [][20]byte
@@ -22,6 +28,10 @@ type Torrent struct {
 	PeerID      [20]byte
 	InfoHash    [20]byte
 	Cfg         *config.Config
+
+	// Callbacks
+	OnProgress ProgressCallback
+	OnEvent    EventCallback
 }
 
 type pieceWork struct {
@@ -44,7 +54,7 @@ type pieceProgress struct {
 	index      int
 }
 
-func (state *pieceProgress) readMessage() error {
+func (state *pieceProgress) ReadMessage() error {
 	msg, err := state.client.Read()
 	if err != nil {
 		return err
@@ -77,7 +87,7 @@ func (state *pieceProgress) readMessage() error {
 	return nil
 }
 
-func (t *Torrent) downloadPiece(c *peer.Client, pw *pieceWork) ([]byte, error) {
+func (t *Torrent) DownloadPiece(c *peer.Client, pw *pieceWork) ([]byte, error) {
 	state := pieceProgress{
 		index:  pw.index,
 		client: c,
@@ -97,7 +107,7 @@ func (t *Torrent) downloadPiece(c *peer.Client, pw *pieceWork) ([]byte, error) {
 
 				err := c.SendRequest(pw.index, state.requested, blockSize)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("sending request for piece %d: %w", pw.index, err)
 				}
 
 				state.backlog++
@@ -105,16 +115,16 @@ func (t *Torrent) downloadPiece(c *peer.Client, pw *pieceWork) ([]byte, error) {
 			}
 		}
 
-		err := state.readMessage()
+		err := state.ReadMessage()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading message for piece %d: %w", pw.index, err)
 		}
 	}
 
 	return state.buf, nil
 }
 
-func checkIntegrity(pw *pieceWork, buf []byte) error {
+func CheckIntegrity(pw *pieceWork, buf []byte) error {
 	hash := sha1.Sum(buf)
 	if !bytes.Equal(hash[:], pw.hash[:]) {
 		return fmt.Errorf("piece %d failed integrity check", pw.index)
@@ -122,15 +132,23 @@ func checkIntegrity(pw *pieceWork, buf []byte) error {
 	return nil
 }
 
-func (t *Torrent) startWorker(ctx context.Context, p peer.Peer, workQueue chan *pieceWork, results chan *pieceResult) {
+func (t *Torrent) emitEvent(event string, data map[string]any) {
+	if t.OnEvent != nil {
+		t.OnEvent(event, data)
+	}
+}
+
+func (t *Torrent) StartWorker(ctx context.Context, p peer.Peer, workQueue chan *pieceWork, results chan *pieceResult) {
 	c, err := peer.New(p, t.PeerID, t.InfoHash, t.Cfg)
 	if err != nil {
-		log.Printf("Could not handshake with %s: %v", p.IP, err)
+		logger.Debug("handshake failed", "peer", p.IP.String(), "error", err)
+		t.emitEvent("handshake_failed", map[string]any{"peer": p.IP.String(), "error": err.Error()})
 		return
 	}
 	defer c.Close()
 
-	log.Printf("Successful handshake with %s", p.IP)
+	logger.Debug("handshake successful", "peer", p.IP.String())
+	t.emitEvent("handshake_success", map[string]any{"peer": p.IP.String()})
 
 	c.SendUnchoke()
 	c.SendInterested()
@@ -149,16 +167,16 @@ func (t *Torrent) startWorker(ctx context.Context, p peer.Peer, workQueue chan *
 				continue
 			}
 
-			buf, err := t.downloadPiece(c, pw)
+			buf, err := t.DownloadPiece(c, pw)
 			if err != nil {
-				log.Printf("Exiting worker: %v", err)
+				logger.Debug("piece download failed", "piece", pw.index, "error", err)
 				workQueue <- pw
 				return
 			}
 
-			err = checkIntegrity(pw, buf)
+			err = CheckIntegrity(pw, buf)
 			if err != nil {
-				log.Printf("Piece #%d failed integrity check", pw.index)
+				logger.Debug("integrity check failed", "piece", pw.index)
 				workQueue <- pw
 				continue
 			}
@@ -169,7 +187,7 @@ func (t *Torrent) startWorker(ctx context.Context, p peer.Peer, workQueue chan *
 	}
 }
 
-func (t *Torrent) boundsForPiece(index int) (begin, end int) {
+func (t *Torrent) BoundsForPiece(index int) (begin, end int) {
 	begin = index * t.PieceLength
 	end = begin + t.PieceLength
 	if end > t.Length {
@@ -178,25 +196,25 @@ func (t *Torrent) boundsForPiece(index int) (begin, end int) {
 	return
 }
 
-func (t *Torrent) pieceSize(index int) int {
-	begin, end := t.boundsForPiece(index)
+func (t *Torrent) PieceSize(index int) int {
+	begin, end := t.BoundsForPiece(index)
 	return end - begin
 }
 
 // Download downloads the torrent and returns the complete file as bytes
 func (t *Torrent) Download(ctx context.Context) ([]byte, error) {
-	log.Println("Starting download for", t.Name)
+	logger.Info("starting download", "name", t.Name, "size", t.Length, "pieces", len(t.PieceHashes))
 
 	workQueue := make(chan *pieceWork, len(t.PieceHashes))
 	results := make(chan *pieceResult)
 
 	for index, hash := range t.PieceHashes {
-		length := t.pieceSize(index)
+		length := t.PieceSize(index)
 		workQueue <- &pieceWork{index, hash, length}
 	}
 
 	for _, p := range t.Peers {
-		go t.startWorker(ctx, p, workQueue, results)
+		go t.StartWorker(ctx, p, workQueue, results)
 	}
 
 	buf := make([]byte, t.Length)
@@ -206,19 +224,26 @@ func (t *Torrent) Download(ctx context.Context) ([]byte, error) {
 		select {
 		case <-ctx.Done():
 			close(workQueue)
-			log.Println("Download cancelled")
+			logger.Info("download cancelled")
 			return nil, ctx.Err()
 		case res := <-results:
-			begin, end := t.boundsForPiece(res.index)
+			begin, end := t.BoundsForPiece(res.index)
 			copy(buf[begin:end], res.buffer)
 			donePieces++
 
 			percent := float64(donePieces) / float64(len(t.PieceHashes)) * 100
 			numWorkers := runtime.NumGoroutine() - 1
-			log.Printf("[%.2f%%] Piece #%d | Peers: %d", percent, res.index, numWorkers)
+
+			// Use callback instead of direct logging
+			if t.OnProgress != nil {
+				t.OnProgress(percent, res.index, numWorkers)
+			}
+
+			logger.Debug("piece downloaded", "piece", res.index, "percent", percent)
 		}
 	}
 
 	close(workQueue)
+	logger.Info("download complete", "name", t.Name)
 	return buf, nil
 }

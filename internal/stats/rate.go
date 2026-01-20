@@ -7,46 +7,65 @@ import (
 	"github.com/gammazero/deque"
 )
 
-type Member struct {
-	bytes     int64
-	timestamp time.Time
+// Sample represents a data point for rate calculation
+type Sample struct {
+	Bytes     int64
+	Timestamp time.Time
 }
 
-// Using a mutex for thread safety since multiple functions are accessing the same data
-// using sliding window + prefix sum to calculate the rate.
+// RateCalculator calculates download speed using a sliding window
 type RateCalculator struct {
-	dq          deque.Deque[Member]
+	samples     deque.Deque[Sample]
 	windowBytes int64
 	window      time.Duration
 	mu          sync.Mutex
 }
 
-func (rc *RateCalculator) Add(bytes int64) {
+// NewRateCalculator creates a new rate calculator with the given window size
+func NewRateCalculator(window time.Duration) *RateCalculator {
+	return &RateCalculator{
+		window: window,
+	}
+}
 
-	// Bucketing for round offing the calc.
+// Add records bytes downloaded at the current time
+func (rc *RateCalculator) Add(bytes int64) {
 	now := time.Now().Truncate(time.Second)
 
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 
-	if rc.dq.Len() > 0 && rc.dq.Back().timestamp.Equal(now) {
-		last := rc.dq.PopBack()
-		last.bytes += bytes
-		rc.dq.PushBack(last)
+	// Merge with last sample if same second
+	if rc.samples.Len() > 0 && rc.samples.Back().Timestamp.Equal(now) {
+		last := rc.samples.PopBack()
+		last.Bytes += bytes
+		rc.samples.PushBack(last)
 	} else {
-		rc.dq.PushBack(Member{bytes: bytes, timestamp: now})
+		rc.samples.PushBack(Sample{Bytes: bytes, Timestamp: now})
 	}
 
 	rc.windowBytes += bytes
 	rc.Prune(now)
-	
 }
 
-func (rc *RateCalculator) Prune(now time.Time) {
+// Rate returns the current download speed in bytes per second
+func (rc *RateCalculator) Rate() float64 {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
 
-	for rc.dq.Len() > 0 && now.Sub(rc.dq.Front().timestamp) > rc.window {
-		rc.windowBytes -= rc.dq.Front().bytes
-		rc.dq.PopFront()
+	rc.Prune(time.Now())
+
+	if rc.samples.Len() == 0 {
+		return 0
 	}
 
+	return float64(rc.windowBytes) / rc.window.Seconds()
+}
+
+// Prune removes samples outside the window
+func (rc *RateCalculator) Prune(now time.Time) {
+	for rc.samples.Len() > 0 && now.Sub(rc.samples.Front().Timestamp) > rc.window {
+		rc.windowBytes -= rc.samples.Front().Bytes
+		rc.samples.PopFront()
+	}
 }

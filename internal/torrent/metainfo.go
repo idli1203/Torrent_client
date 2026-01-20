@@ -3,6 +3,7 @@ package torrent
 import (
 	"btc/internal/config"
 	"btc/internal/download"
+	"btc/internal/logger"
 	"btc/internal/peer"
 	"bytes"
 	"context"
@@ -17,7 +18,7 @@ import (
 	"github.com/jackpal/bencode-go"
 )
 
-// bencodeInfo contains the info dictionary and data about the torrent file
+// bencodeInfo contains the info dictionary from a .torrent file
 type bencodeInfo struct {
 	Name        string `bencode:"name"`
 	Pieces      string `bencode:"pieces"`
@@ -25,13 +26,13 @@ type bencodeInfo struct {
 	PieceLength int    `bencode:"piece length"`
 }
 
-// bencodeTorrent is the bencoded torrent file depackaged to a struct
+// bencodeTorrent represents a parsed .torrent file
 type bencodeTorrent struct {
 	Announce string      `bencode:"announce"`
 	Info     bencodeInfo `bencode:"info"`
 }
 
-// TorrentFile is a compact struct with all relevant data
+// TorrentFile contains processed torrent metadata
 type TorrentFile struct {
 	Name        string
 	Announce    string
@@ -41,18 +42,26 @@ type TorrentFile struct {
 	Length      int
 }
 
-// bencode_tracker_resp holds the tracker response
-type bencode_tracker_resp struct {
+// bencodeTrackerResp holds the tracker response
+type bencodeTrackerResp struct {
 	Peers    string `bencode:"peers"`
 	Interval int    `bencode:"interval"`
 }
 
+// DownloadOptions configures the download behavior
+type DownloadOptions struct {
+	OnProgress download.ProgressCallback
+	OnEvent    download.EventCallback
+}
+
+// TrackerURL builds the announce URL with required parameters
 func (t *TorrentFile) TrackerURL(peerID [20]byte, port uint16) (string, error) {
-	parsed_url, err := url.Parse(t.Announce)
+	parsedURL, err := url.Parse(t.Announce)
 	if err != nil {
-		return "", fmt.Errorf("could not parse tracker URL: %w", err)
+		return "", fmt.Errorf("parsing tracker URL: %w", err)
 	}
-	parameters_url := url.Values{
+
+	params := url.Values{
 		"info_hash":  []string{string(t.InfoHash[:])},
 		"peer_id":    []string{string(peerID[:])},
 		"port":       []string{strconv.Itoa(int(port))},
@@ -61,42 +70,48 @@ func (t *TorrentFile) TrackerURL(peerID [20]byte, port uint16) (string, error) {
 		"compact":    []string{"1"},
 		"left":       []string{strconv.Itoa(t.Length)},
 	}
-	parsed_url.RawQuery = parameters_url.Encode()
+	parsedURL.RawQuery = params.Encode()
 
-	return parsed_url.String(), nil
+	return parsedURL.String(), nil
 }
 
+// RequestPeers contacts the tracker and returns a list of peers
 func (t *TorrentFile) RequestPeers(peerID [20]byte, port uint16, cfg *config.Config) ([]peer.Peer, error) {
 	trackerURL, err := t.TrackerURL(peerID, port)
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: cfg.TrackerTimeout}
-	response, err := client.Get(trackerURL)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
 
-	tracker_resp := bencode_tracker_resp{}
-	err = bencode.Unmarshal(response.Body, &tracker_resp)
+	client := &http.Client{Timeout: cfg.TrackerTimeout}
+	resp, err := client.Get(trackerURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("contacting tracker: %w", err)
 	}
-	return peer.UnmarshalPeers([]byte(tracker_resp.Peers))
+	defer resp.Body.Close()
+
+	var trackerResp bencodeTrackerResp
+	err = bencode.Unmarshal(resp.Body, &trackerResp)
+	if err != nil {
+		return nil, fmt.Errorf("parsing tracker response: %w", err)
+	}
+
+	return peer.UnmarshalPeers([]byte(trackerResp.Peers))
 }
 
-func (t *TorrentFile) DownloadToFile(ctx context.Context, path string, cfg *config.Config) error {
+// DownloadToFile downloads the torrent and saves it to the specified path
+func (t *TorrentFile) DownloadToFile(ctx context.Context, path string, cfg *config.Config, opts *DownloadOptions) error {
 	var peerID [20]byte
 	_, err := rand.Read(peerID[:])
 	if err != nil {
-		return err
+		return fmt.Errorf("generating peer ID: %w", err)
 	}
 
+	logger.Info("requesting peers from tracker", "announce", t.Announce)
 	peers, err := t.RequestPeers(peerID, 8080, cfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("requesting peers: %w", err)
 	}
+	logger.Info("received peers", "count", len(peers))
 
 	torrent := download.Torrent{
 		Peers:       peers,
@@ -108,85 +123,96 @@ func (t *TorrentFile) DownloadToFile(ctx context.Context, path string, cfg *conf
 		Name:        t.Name,
 		Cfg:         cfg,
 	}
+
+	if opts != nil {
+		torrent.OnProgress = opts.OnProgress
+		torrent.OnEvent = opts.OnEvent
+	}
+
 	buf, err := torrent.Download(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("downloading: %w", err)
 	}
 
 	outFile, err := os.Create(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating output file: %w", err)
 	}
 	defer outFile.Close()
+
 	_, err = outFile.Write(buf)
 	if err != nil {
-		return err
+		return fmt.Errorf("writing output file: %w", err)
 	}
+
+	logger.Info("file saved", "path", path)
 	return nil
 }
 
-func Open(torrent_file string) (*TorrentFile, error) {
-	file, err := os.Open(torrent_file)
+// Open parses a .torrent file and returns a TorrentFile
+func Open(path string) (*TorrentFile, error) {
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read the torrent file: %w", err)
+		return nil, fmt.Errorf("opening torrent file: %w", err)
 	}
 	defer file.Close()
 
-	var torrent bencodeTorrent
-
-	err = bencode.Unmarshal(file, &torrent)
+	var bto bencodeTorrent
+	err = bencode.Unmarshal(file, &bto)
 	if err != nil {
-		return nil, fmt.Errorf("could not unmarshal the torrent file: %w", err)
+		return nil, fmt.Errorf("parsing torrent file: %w", err)
 	}
 
-	return torrent.ToTorrentstruct()
+	return bto.ToTorrentFile()
 }
 
-func (tor_info *bencodeInfo) ComputeinfoHash() ([20]byte, error) {
-	var buffer bytes.Buffer
-
-	err := bencode.Marshal(&buffer, *tor_info)
+// ComputeInfoHash calculates the SHA1 hash of the info dictionary
+func (info *bencodeInfo) ComputeInfoHash() ([20]byte, error) {
+	var buf bytes.Buffer
+	err := bencode.Marshal(&buf, *info)
 	if err != nil {
-		return [20]byte{}, fmt.Errorf("could not compute info hash: %w", err)
+		return [20]byte{}, fmt.Errorf("marshaling info dict: %w", err)
 	}
-
-	compute := sha1.Sum(buffer.Bytes())
-
-	return compute, nil
+	return sha1.Sum(buf.Bytes()), nil
 }
 
-func (tor_info *bencodeInfo) SplitToPieces() ([][20]byte, error) {
-	sha1_hash_length := 20
-	buf := []byte(tor_info.Pieces)
+// SplitPieceHashes splits the pieces string into individual hashes
+func (info *bencodeInfo) SplitPieceHashes() ([][20]byte, error) {
+	const hashLen = 20
+	buf := []byte(info.Pieces)
 
-	if len(buf)%sha1_hash_length != 0 {
-		return nil, fmt.Errorf("pieces are wrongly encoded, length %d not divisible by %d", len(buf), sha1_hash_length)
+	if len(buf)%hashLen != 0 {
+		return nil, fmt.Errorf("malformed pieces: length %d not divisible by %d", len(buf), hashLen)
 	}
 
-	numPieces := len(buf) / sha1_hash_length
+	numPieces := len(buf) / hashLen
+	hashes := make([][20]byte, numPieces)
 
-	PieceHashes := make([][20]byte, numPieces)
 	for i := 0; i < numPieces; i++ {
-		copy(PieceHashes[i][:], tor_info.Pieces[i*sha1_hash_length:(i+1)*sha1_hash_length])
+		copy(hashes[i][:], buf[i*hashLen:(i+1)*hashLen])
 	}
-	return PieceHashes, nil
+
+	return hashes, nil
 }
 
-func (torrent bencodeTorrent) ToTorrentstruct() (*TorrentFile, error) {
-	all_pieces, err := torrent.Info.SplitToPieces()
+// ToTorrentFile converts a bencodeTorrent to a TorrentFile
+func (bto *bencodeTorrent) ToTorrentFile() (*TorrentFile, error) {
+	pieceHashes, err := bto.Info.SplitPieceHashes()
 	if err != nil {
 		return nil, err
 	}
-	info_hashed, err := torrent.Info.ComputeinfoHash()
+
+	infoHash, err := bto.Info.ComputeInfoHash()
 	if err != nil {
 		return nil, err
 	}
+	
 	return &TorrentFile{
-		Name:        torrent.Info.Name,
-		Announce:    torrent.Announce,
-		PieceHashes: all_pieces,
-		InfoHash:    info_hashed,
-		PieceLength: torrent.Info.PieceLength,
-		Length:      torrent.Info.Length,
+		Name:        bto.Info.Name,
+		Announce:    bto.Announce,
+		PieceHashes: pieceHashes,
+		InfoHash:    infoHash,
+		PieceLength: bto.Info.PieceLength,
+		Length:      bto.Info.Length,
 	}, nil
 }
