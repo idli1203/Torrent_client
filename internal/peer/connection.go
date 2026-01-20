@@ -65,7 +65,7 @@ func receiveBitfield(conn net.Conn, cfg *config.Config) (protocol.Bitfield, erro
 
 // New creates a new peer client connection
 func New(peer Peer, peerID, infohash [20]byte, cfg *config.Config) (*Client, error) {
-	conn, err := net.DialTimeout("tcp", peer.String(), cfg.TcpTimeout)
+	conn, err := net.DialTimeout("tcp", peer.String(), cfg.TCPTimeout)
 	if err != nil {
 		return nil, err
 	}

@@ -4,16 +4,13 @@ import (
 	"btc/internal/config"
 	"btc/internal/download"
 	"btc/internal/logger"
-	"btc/internal/peer"
+	"btc/internal/tracker"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
-	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 
 	"github.com/jackpal/bencode-go"
 )
@@ -42,60 +39,10 @@ type TorrentFile struct {
 	Length      int
 }
 
-// bencodeTrackerResp holds the tracker response
-type bencodeTrackerResp struct {
-	Peers    string `bencode:"peers"`
-	Interval int    `bencode:"interval"`
-}
-
 // DownloadOptions configures the download behavior
 type DownloadOptions struct {
 	OnProgress download.ProgressCallback
 	OnEvent    download.EventCallback
-}
-
-// TrackerURL builds the announce URL with required parameters
-func (t *TorrentFile) TrackerURL(peerID [20]byte, port uint16) (string, error) {
-	parsedURL, err := url.Parse(t.Announce)
-	if err != nil {
-		return "", fmt.Errorf("parsing tracker URL: %w", err)
-	}
-
-	params := url.Values{
-		"info_hash":  []string{string(t.InfoHash[:])},
-		"peer_id":    []string{string(peerID[:])},
-		"port":       []string{strconv.Itoa(int(port))},
-		"uploaded":   []string{"0"},
-		"downloaded": []string{"0"},
-		"compact":    []string{"1"},
-		"left":       []string{strconv.Itoa(t.Length)},
-	}
-	parsedURL.RawQuery = params.Encode()
-
-	return parsedURL.String(), nil
-}
-
-// RequestPeers contacts the tracker and returns a list of peers
-func (t *TorrentFile) RequestPeers(peerID [20]byte, port uint16, cfg *config.Config) ([]peer.Peer, error) {
-	trackerURL, err := t.TrackerURL(peerID, port)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{Timeout: cfg.TrackerTimeout}
-	resp, err := client.Get(trackerURL)
-	if err != nil {
-		return nil, fmt.Errorf("contacting tracker: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var trackerResp bencodeTrackerResp
-	err = bencode.Unmarshal(resp.Body, &trackerResp)
-	if err != nil {
-		return nil, fmt.Errorf("parsing tracker response: %w", err)
-	}
-
-	return peer.UnmarshalPeers([]byte(trackerResp.Peers))
 }
 
 // DownloadToFile downloads the torrent and saves it to the specified path
@@ -106,8 +53,10 @@ func (t *TorrentFile) DownloadToFile(ctx context.Context, path string, cfg *conf
 		return fmt.Errorf("generating peer ID: %w", err)
 	}
 
+	// Use tracker package for peer discovery
 	logger.Info("requesting peers from tracker", "announce", t.Announce)
-	peers, err := t.RequestPeers(peerID, 8080, cfg)
+	httpTracker := tracker.NewHTTPTracker(t.Announce, cfg)
+	peers, err := httpTracker.Announce(peerID, 8080, t.InfoHash, t.Length)
 	if err != nil {
 		return fmt.Errorf("requesting peers: %w", err)
 	}
@@ -206,7 +155,7 @@ func (bto *bencodeTorrent) ToTorrentFile() (*TorrentFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &TorrentFile{
 		Name:        bto.Info.Name,
 		Announce:    bto.Announce,

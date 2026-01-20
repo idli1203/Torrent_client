@@ -2,18 +2,16 @@ package peer
 
 import "btc/internal/protocol"
 
-// MOCK TESTING INTERFACES
-
-// Connection defines the interface for peer communication. ( aka for communication.go file functions)
+// Connection defines the interface for peer communication.
+// Allows mocking peer connections in unit tests.
 type Connection interface {
-
 	// Read reads and parses the next message from the peer
 	Read() (*protocol.Message, error)
 
 	// SendRequest sends request for a block from the peer
 	SendRequest(index, begin, length int) error
 
-	// SendInterested tells the peer we interested in the pieces.
+	// SendInterested tells the peer we're interested in their pieces
 	SendInterested() error
 
 	// SendNotInterested tells the peer we're not interested
