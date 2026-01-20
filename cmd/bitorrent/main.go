@@ -16,13 +16,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// signal handling
+	// SIGTERM and SIGINT handle using single unit channel
 	sigChannel := make(chan os.Signal, 1)
 	signal.Notify(sigChannel, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-sigChannel
-		log.Println("Shutting down : SIGTERM error received")
+		log.Println("Shutting down due to SIGTERM/SIGINT error")
 		cancel()
 	}()
 

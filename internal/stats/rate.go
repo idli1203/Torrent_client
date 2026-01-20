@@ -39,7 +39,7 @@ func (rc *RateCalculator) Add(bytes int64) {
 
 	rc.windowBytes += bytes
 	rc.Prune(now)
-
+	
 }
 
 func (rc *RateCalculator) Prune(now time.Time) {
