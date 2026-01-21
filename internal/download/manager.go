@@ -5,6 +5,8 @@ import (
 	"btc/internal/logger"
 	"btc/internal/peer"
 	"btc/internal/protocol"
+	"btc/internal/stats"
+	"btc/internal/storage"
 	"bytes"
 	"context"
 	"crypto/sha1"
@@ -14,10 +16,12 @@ import (
 )
 
 // ProgressCallback is called to report download progress
-type ProgressCallback func(percent float64, pieceIndex int, peerCount int)
+type ProgressCallback func(percent float64, pieceIndex int, peerCount int, speed float64)
 
 // EventCallback is called to report events during download
 type EventCallback func(event string, data map[string]any)
+
+var outputpath string
 
 type Torrent struct {
 	PieceHashes [][20]byte
@@ -28,10 +32,9 @@ type Torrent struct {
 	PeerID      [20]byte
 	InfoHash    [20]byte
 	Cfg         *config.Config
-
-	// Callbacks
-	OnProgress ProgressCallback
-	OnEvent    EventCallback
+	rateCalc    *stats.RateCalculator
+	OnProgress  ProgressCallback
+	OnEvent     EventCallback
 }
 
 type pieceWork struct {
@@ -205,6 +208,9 @@ func (t *Torrent) PieceSize(index int) int {
 func (t *Torrent) Download(ctx context.Context) ([]byte, error) {
 	logger.Info("starting download", "name", t.Name, "size", t.Length, "pieces", len(t.PieceHashes))
 
+	completedPieces := make([]bool, len(t.PieceHashes))
+
+	t.rateCalc = stats.NewRateCalculator(1 * time.Second)
 	workQueue := make(chan *pieceWork, len(t.PieceHashes))
 	results := make(chan *pieceResult)
 
@@ -225,18 +231,27 @@ func (t *Torrent) Download(ctx context.Context) ([]byte, error) {
 		case <-ctx.Done():
 			close(workQueue)
 			logger.Info("download cancelled")
+			resumePath := outputpath + ".resume"
+			storage.SaveResume(resumePath, &storage.ResumeData{
+				InfoHash:        t.InfoHash,
+				CompletedPieces: completedPieces,
+				DownloadedBytes: int64(donePieces * t.PieceLength),
+			})
 			return nil, ctx.Err()
 		case res := <-results:
 			begin, end := t.BoundsForPiece(res.index)
 			copy(buf[begin:end], res.buffer)
+			completedPieces[res.index] = true
 			donePieces++
 
+			t.rateCalc.Add(int64(len(res.buffer)))
 			percent := float64(donePieces) / float64(len(t.PieceHashes)) * 100
 			numWorkers := runtime.NumGoroutine() - 1
 
 			// Use callback instead of direct logging
 			if t.OnProgress != nil {
-				t.OnProgress(percent, res.index, numWorkers)
+				speed := t.rateCalc.Rate()
+				t.OnProgress(percent, res.index, numWorkers, speed)
 			}
 
 			logger.Debug("piece downloaded", "piece", res.index, "percent", percent)

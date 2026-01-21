@@ -53,8 +53,9 @@ func main() {
 
 	// Set up download options with progress callback
 	opts := &torrent.DownloadOptions{
-		OnProgress: func(percent float64, pieceIndex int, peerCount int) {
-			fmt.Printf("\r[%.2f%%] Piece #%d | Peers: %d", percent, pieceIndex, peerCount)
+		OnProgress: func(percent float64, pieceIndex int, peerCount int, speed float64) {
+			speedMB := speed / 1024 / 1024
+			fmt.Printf("\r[%.2f%%] Piece #%d | Peers: %d | Speed: %.2f MB/s", percent, pieceIndex, peerCount, speedMB)
 		},
 		OnEvent: func(event string, data map[string]any) {
 			logger.Debug("event", "type", event, "data", data)

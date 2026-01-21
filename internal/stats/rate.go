@@ -7,13 +7,13 @@ import (
 	"github.com/gammazero/deque"
 )
 
-// Sample represents a data point for rate calculation
+// Typical sample for math
 type Sample struct {
 	Bytes     int64
 	Timestamp time.Time
 }
 
-// RateCalculator calculates download speed using a sliding window
+// RateCalculator has metrics for calculating download speed
 type RateCalculator struct {
 	samples     deque.Deque[Sample]
 	windowBytes int64
@@ -28,14 +28,13 @@ func NewRateCalculator(window time.Duration) *RateCalculator {
 	}
 }
 
-// Add records bytes downloaded at the current time
+// Add records bytes downloaded at the current truncate time
 func (rc *RateCalculator) Add(bytes int64) {
-	now := time.Now().Truncate(time.Second)
+	now := time.Now().Truncate(100 * time.Millisecond)
 
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 
-	// Merge with last sample if same second
 	if rc.samples.Len() > 0 && rc.samples.Back().Timestamp.Equal(now) {
 		last := rc.samples.PopBack()
 		last.Bytes += bytes
@@ -48,7 +47,7 @@ func (rc *RateCalculator) Add(bytes int64) {
 	rc.Prune(now)
 }
 
-// Rate returns the current download speed in bytes per second
+// Rate returns the computed math on per sec basis
 func (rc *RateCalculator) Rate() float64 {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
