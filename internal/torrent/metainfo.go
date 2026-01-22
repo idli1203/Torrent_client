@@ -15,7 +15,7 @@ import (
 	"github.com/jackpal/bencode-go"
 )
 
-// bencodeInfo contains the info dictionary from a .torrent file
+// Info dict struct
 type bencodeInfo struct {
 	Name        string `bencode:"name"`
 	Pieces      string `bencode:"pieces"`
@@ -23,7 +23,7 @@ type bencodeInfo struct {
 	PieceLength int    `bencode:"piece length"`
 }
 
-// bencodeTorrent represents a parsed .torrent file
+// Represents a .torrent file (Only relevant parameters)
 type bencodeTorrent struct {
 	Announce string      `bencode:"announce"`
 	Info     bencodeInfo `bencode:"info"`
@@ -39,7 +39,7 @@ type TorrentFile struct {
 	Length      int
 }
 
-// DownloadOptions configures the download behavior
+// For wiring progress and events tracking into ui
 type DownloadOptions struct {
 	OnProgress download.ProgressCallback
 	OnEvent    download.EventCallback
@@ -53,7 +53,6 @@ func (t *TorrentFile) DownloadToFile(ctx context.Context, path string, cfg *conf
 		return fmt.Errorf("generating peer ID: %w", err)
 	}
 
-	// Use tracker package for peer discovery
 	logger.Info("requesting peers from tracker", "announce", t.Announce)
 	httpTracker := tracker.NewHTTPTracker(t.Announce, cfg)
 	peers, err := httpTracker.Announce(peerID, 8080, t.InfoHash, t.Length)
@@ -78,7 +77,7 @@ func (t *TorrentFile) DownloadToFile(ctx context.Context, path string, cfg *conf
 		torrent.OnEvent = opts.OnEvent
 	}
 
-	buf, err := torrent.Download(ctx)
+	buf, err := torrent.Download(ctx, path)
 	if err != nil {
 		return fmt.Errorf("downloading: %w", err)
 	}
@@ -100,6 +99,7 @@ func (t *TorrentFile) DownloadToFile(ctx context.Context, path string, cfg *conf
 
 // Open parses a .torrent file and returns a TorrentFile
 func Open(path string) (*TorrentFile, error) {
+	logger.Info("opening torrent file", "path", path)
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening torrent file: %w", err)
@@ -118,7 +118,7 @@ func Open(path string) (*TorrentFile, error) {
 // ComputeInfoHash calculates the SHA1 hash of the info dictionary
 func (info *bencodeInfo) ComputeInfoHash() ([20]byte, error) {
 	var buf bytes.Buffer
-	err := bencode.Marshal(&buf, *info)
+	err := bencode.Marshal(&buf, info)
 	if err != nil {
 		return [20]byte{}, fmt.Errorf("marshaling info dict: %w", err)
 	}

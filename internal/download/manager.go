@@ -1,27 +1,22 @@
 package download
 
 import (
-	"btc/internal/config"
-	"btc/internal/logger"
-	"btc/internal/peer"
-	"btc/internal/protocol"
-	"btc/internal/stats"
-	"btc/internal/storage"
-	"bytes"
-	"context"
-	"crypto/sha1"
-	"fmt"
-	"runtime"
-	"time"
+"btc/internal/config"
+"btc/internal/logger"
+"btc/internal/peer"
+"btc/internal/protocol"
+"btc/internal/stats"
+"btc/internal/storage"
+"bytes"
+"context"
+"crypto/sha1"
+"fmt"
+"runtime"
+"time"
 )
 
-// ProgressCallback is called to report download progress
 type ProgressCallback func(percent float64, pieceIndex int, peerCount int, speed float64)
-
-// EventCallback is called to report events during download
 type EventCallback func(event string, data map[string]any)
-
-var outputpath string
 
 type Torrent struct {
 	PieceHashes [][20]byte
@@ -62,11 +57,9 @@ func (state *pieceProgress) ReadMessage() error {
 	if err != nil {
 		return err
 	}
-
 	if msg == nil {
 		return nil
 	}
-
 	switch msg.ID {
 	case protocol.MsgUnchoke:
 		state.client.Choke = false
@@ -86,7 +79,6 @@ func (state *pieceProgress) ReadMessage() error {
 		state.downloaded += n
 		state.backlog--
 	}
-
 	return nil
 }
 
@@ -96,10 +88,8 @@ func (t *Torrent) DownloadPiece(c *peer.Client, pw *pieceWork) ([]byte, error) {
 		client: c,
 		buf:    make([]byte, pw.length),
 	}
-
 	c.Conn.SetDeadline(time.Now().Add(t.Cfg.PieceTimeout))
 	defer c.Conn.SetDeadline(time.Time{})
-
 	for state.downloaded < pw.length {
 		if !state.client.Choke {
 			for state.backlog < t.Cfg.RequestBacklog && state.requested < pw.length {
@@ -107,23 +97,19 @@ func (t *Torrent) DownloadPiece(c *peer.Client, pw *pieceWork) ([]byte, error) {
 				if pw.length-state.requested < blockSize {
 					blockSize = pw.length - state.requested
 				}
-
 				err := c.SendRequest(pw.index, state.requested, blockSize)
 				if err != nil {
 					return nil, fmt.Errorf("sending request for piece %d: %w", pw.index, err)
 				}
-
 				state.backlog++
 				state.requested += blockSize
 			}
 		}
-
 		err := state.ReadMessage()
 		if err != nil {
 			return nil, fmt.Errorf("reading message for piece %d: %w", pw.index, err)
 		}
 	}
-
 	return state.buf, nil
 }
 
@@ -149,13 +135,10 @@ func (t *Torrent) StartWorker(ctx context.Context, p peer.Peer, workQueue chan *
 		return
 	}
 	defer c.Close()
-
 	logger.Debug("handshake successful", "peer", p.IP.String())
 	t.emitEvent("handshake_success", map[string]any{"peer": p.IP.String()})
-
 	c.SendUnchoke()
 	c.SendInterested()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -164,26 +147,22 @@ func (t *Torrent) StartWorker(ctx context.Context, p peer.Peer, workQueue chan *
 			if !ok {
 				return
 			}
-
 			if !c.Bitfield.HasPiece(pw.index) {
 				workQueue <- pw
 				continue
 			}
-
 			buf, err := t.DownloadPiece(c, pw)
 			if err != nil {
 				logger.Debug("piece download failed", "piece", pw.index, "error", err)
 				workQueue <- pw
 				return
 			}
-
 			err = CheckIntegrity(pw, buf)
 			if err != nil {
 				logger.Debug("integrity check failed", "piece", pw.index)
 				workQueue <- pw
 				continue
 			}
-
 			c.SendHave(pw.index)
 			results <- &pieceResult{buf, pw.index}
 		}
@@ -204,34 +183,44 @@ func (t *Torrent) PieceSize(index int) int {
 	return end - begin
 }
 
-// Download downloads the torrent and returns the complete file as bytes
-func (t *Torrent) Download(ctx context.Context) ([]byte, error) {
+func (t *Torrent) Download(ctx context.Context, outputPath string) ([]byte, error) {
 	logger.Info("starting download", "name", t.Name, "size", t.Length, "pieces", len(t.PieceHashes))
-
+	resumePath := outputPath + ".resume"
 	completedPieces := make([]bool, len(t.PieceHashes))
-
+	donePieces := 0
+	if storage.ResumeExists(resumePath) {
+		resumeData, err := storage.LoadResume(resumePath)
+		if err == nil && bytes.Equal(resumeData.InfoHash[:], t.InfoHash[:]) {
+			logger.Info("resuming download", "path", resumePath)
+			completedPieces = resumeData.CompletedPieces
+			for _, completed := range completedPieces {
+				if completed {
+					donePieces++
+				}
+			}
+			logger.Info("resume state loaded", "completed", donePieces, "remaining", len(t.PieceHashes)-donePieces)
+		} else {
+			logger.Warn("resume file invalid or mismatched, starting fresh")
+		}
+	}
 	t.rateCalc = stats.NewRateCalculator(1 * time.Second)
 	workQueue := make(chan *pieceWork, len(t.PieceHashes))
 	results := make(chan *pieceResult)
-
 	for index, hash := range t.PieceHashes {
-		length := t.PieceSize(index)
-		workQueue <- &pieceWork{index, hash, length}
+		if !completedPieces[index] {
+			length := t.PieceSize(index)
+			workQueue <- &pieceWork{index, hash, length}
+		}
 	}
-
 	for _, p := range t.Peers {
 		go t.StartWorker(ctx, p, workQueue, results)
 	}
-
 	buf := make([]byte, t.Length)
-	donePieces := 0
-
 	for donePieces < len(t.PieceHashes) {
 		select {
 		case <-ctx.Done():
 			close(workQueue)
-			logger.Info("download cancelled")
-			resumePath := outputpath + ".resume"
+			logger.Info("download cancelled, saving resume state")
 			storage.SaveResume(resumePath, &storage.ResumeData{
 				InfoHash:        t.InfoHash,
 				CompletedPieces: completedPieces,
@@ -243,22 +232,21 @@ func (t *Torrent) Download(ctx context.Context) ([]byte, error) {
 			copy(buf[begin:end], res.buffer)
 			completedPieces[res.index] = true
 			donePieces++
-
 			t.rateCalc.Add(int64(len(res.buffer)))
 			percent := float64(donePieces) / float64(len(t.PieceHashes)) * 100
 			numWorkers := runtime.NumGoroutine() - 1
-
-			// Use callback instead of direct logging
 			if t.OnProgress != nil {
 				speed := t.rateCalc.Rate()
 				t.OnProgress(percent, res.index, numWorkers, speed)
 			}
-
 			logger.Debug("piece downloaded", "piece", res.index, "percent", percent)
 		}
 	}
-
 	close(workQueue)
+	if storage.ResumeExists(resumePath) {
+		storage.DeleteResume(resumePath)
+		logger.Debug("resume file deleted")
+	}
 	logger.Info("download complete", "name", t.Name)
 	return buf, nil
 }

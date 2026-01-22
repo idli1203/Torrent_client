@@ -22,7 +22,7 @@ func UnmarshalPeers(peerData []byte) ([]Peer, error) {
 	numPeers := len(peerData) / peerSize
 	peers := make([]Peer, numPeers)
 
-	for i := 0; i < numPeers; i++ {
+	for i := range numPeers {
 		offset := i * peerSize
 		peers[i].IP = net.IP(peerData[offset : offset+4])
 		peers[i].Port = binary.BigEndian.Uint16(peerData[offset+4 : offset+6])

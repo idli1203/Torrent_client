@@ -45,7 +45,7 @@ func (t *HTTPTracker) BuildURL(peerID [20]byte, port uint16, infoHash [20]byte, 
 		"uploaded":   []string{"0"},
 		"downloaded": []string{"0"},
 		"compact":    []string{"1"},
-		"left":       []string{strconv.Itoa(left)},
+		"left":       []string{strconv.Itoa(left)}, 
 	}
 	parsedURL.RawQuery = params.Encode()
 

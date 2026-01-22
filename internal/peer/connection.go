@@ -19,7 +19,7 @@ type Client struct {
 	cfg      *config.Config
 }
 
-func completeHandshake(conn net.Conn, infohash, peerID [20]byte, cfg *config.Config) (*protocol.Handshake, error) {
+func CompleteHandshake(conn net.Conn, infohash, peerID [20]byte, cfg *config.Config) (*protocol.Handshake, error) {
 	conn.SetDeadline(time.Now().Add(cfg.HandshakeTimeout))
 	defer conn.SetDeadline(time.Time{})
 
@@ -44,7 +44,7 @@ func completeHandshake(conn net.Conn, infohash, peerID [20]byte, cfg *config.Con
 	return res, nil
 }
 
-func receiveBitfield(conn net.Conn, cfg *config.Config) (protocol.Bitfield, error) {
+func ReceiveBitfield(conn net.Conn, cfg *config.Config) (protocol.Bitfield, error) {
 	conn.SetDeadline(time.Now().Add(cfg.HandshakeTimeout))
 	defer conn.SetDeadline(time.Time{})
 
@@ -70,13 +70,13 @@ func New(peer Peer, peerID, infohash [20]byte, cfg *config.Config) (*Client, err
 		return nil, err
 	}
 
-	_, err = completeHandshake(conn, infohash, peerID, cfg)
+	_, err = CompleteHandshake(conn, infohash, peerID, cfg)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
 
-	bfield, err := receiveBitfield(conn, cfg)
+	bfield, err := ReceiveBitfield(conn, cfg)
 	if err != nil {
 		conn.Close()
 		return nil, err
