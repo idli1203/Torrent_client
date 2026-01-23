@@ -68,3 +68,11 @@ func (rc *RateCalculator) Prune(now time.Time) {
 		rc.samples.PopFront()
 	}
 }
+
+func (rc *RateCalculator) ETA(remaining float64) time.Duration {
+	rate := rc.Rate()
+	if rate <= 0 {
+		return 0
+	}
+	return time.Duration(remaining/rate) * time.Second
+}
