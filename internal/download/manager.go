@@ -1,18 +1,18 @@
 package download
 
 import (
-"btc/internal/config"
-"btc/internal/logger"
-"btc/internal/peer"
-"btc/internal/protocol"
-"btc/internal/stats"
-"btc/internal/storage"
-"bytes"
-"context"
-"crypto/sha1"
-"fmt"
-"runtime"
-"time"
+	"btc/internal/config"
+	"btc/internal/logger"
+	"btc/internal/peer"
+	"btc/internal/protocol"
+	"btc/internal/stats"
+	"btc/internal/storage"
+	"bytes"
+	"context"
+	"crypto/sha1"
+	"fmt"
+	"runtime"
+	"time"
 )
 
 type ProgressCallback func(percent float64, pieceIndex int, peerCount int, speed float64)
@@ -183,8 +183,15 @@ func (t *Torrent) PieceSize(index int) int {
 	return end - begin
 }
 
-func (t *Torrent) Download(ctx context.Context, outputPath string) ([]byte, error) {
+func (t *Torrent) Download(ctx context.Context, outputPath string) error {
 	logger.Info("starting download", "name", t.Name, "size", t.Length, "pieces", len(t.PieceHashes))
+
+	fs, err := storage.NewFileStorage(outputPath, t.PieceLength, t.Length)
+	if err != nil {
+		return err
+	}
+	defer fs.Close()
+
 	resumePath := outputPath + ".resume"
 	completedPieces := make([]bool, len(t.PieceHashes))
 	donePieces := 0
@@ -215,7 +222,7 @@ func (t *Torrent) Download(ctx context.Context, outputPath string) ([]byte, erro
 	for _, p := range t.Peers {
 		go t.StartWorker(ctx, p, workQueue, results)
 	}
-	buf := make([]byte, t.Length)
+
 	for donePieces < len(t.PieceHashes) {
 		select {
 		case <-ctx.Done():
@@ -226,10 +233,15 @@ func (t *Torrent) Download(ctx context.Context, outputPath string) ([]byte, erro
 				CompletedPieces: completedPieces,
 				DownloadedBytes: int64(donePieces * t.PieceLength),
 			})
-			return nil, ctx.Err()
+			return ctx.Err()
 		case res := <-results:
-			begin, end := t.BoundsForPiece(res.index)
-			copy(buf[begin:end], res.buffer)
+			// newer implementation on the file storage
+			err = fs.WritePiece(res.index, res.buffer)
+			if err != nil {
+				logger.Error("Issue while writing piece: " + err.Error())
+				return err
+			}
+			// might need to do something here instead of returning error on a peice , maybe requeueu or ask different peer or maybe something else. 
 			completedPieces[res.index] = true
 			donePieces++
 			t.rateCalc.Add(int64(len(res.buffer)))
@@ -248,5 +260,6 @@ func (t *Torrent) Download(ctx context.Context, outputPath string) ([]byte, erro
 		logger.Debug("resume file deleted")
 	}
 	logger.Info("download complete", "name", t.Name)
-	return buf, nil
+
+	return nil
 }

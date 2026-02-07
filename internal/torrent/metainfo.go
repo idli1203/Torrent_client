@@ -77,20 +77,10 @@ func (t *TorrentFile) DownloadToFile(ctx context.Context, path string, cfg *conf
 		torrent.OnEvent = opts.OnEvent
 	}
 
-	buf, err := torrent.Download(ctx, path)
+	err = torrent.Download(ctx, path)
 	if err != nil {
-		return fmt.Errorf("downloading: %w", err)
-	}
-
-	outFile, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("creating output file: %w", err)
-	}
-	defer outFile.Close()
-
-	_, err = outFile.Write(buf)
-	if err != nil {
-		return fmt.Errorf("writing output file: %w", err)
+		logger.Error(`Issue while downloading file: ` + err.Error())
+		return err
 	}
 
 	logger.Info("file saved", "path", path)
